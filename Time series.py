@@ -1,121 +1,106 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
+import plotly.graph_objects as go
 
-# -----------------------------------------------------
-# 1. LOAD CMBS PROPERTY-LEVEL DATA
-# -----------------------------------------------------
-df = pd.read_excel("CMBS_property_data.xlsx")
+st.title("CMBS Property Time Series + Scenario Forecast")
 
-# Expected columns (modify if needed):
-# 'Property Name', 'Year', 'NOI', 'Occupancy', 'Value', 'DSCR'
-# If your sheet has other names, rename here:
-# df = df.rename(columns={'Net Operating Income':'NOI', 'Appraised Value':'Value'})
+# ----------------------------------------------------------
+# 1. UPLOAD EXCEL
+# ----------------------------------------------------------
+file = st.file_uploader("Upload CMBS_property_data.xlsx", type=["xlsx"])
 
+if file:
+    df = pd.read_excel(file)
 
-# -----------------------------------------------------
-# 2. SELECT A PROPERTY FOR ANALYSIS
-# -----------------------------------------------------
-property_name = df['Property Name'].unique()[0]   # or manually set a name
-pdf = df[df['Property Name'] == property_name].sort_values('Year')
+    # ----------------------------------------------------------
+    # 2. PREPARE COLUMNS (rename if needed)
+    # ----------------------------------------------------------
+    # Expected columns:
+    # Property Name | Year | NOI | Occupancy | Value
 
-print(f"\nAnalyzing Property: {property_name}\n")
-print(pdf)
+    st.write("### Raw Data Preview")
+    st.dataframe(df.head())
 
+    # Select property
+    property_name = st.selectbox("Select Property", df["Property Name"].unique())
+    pdf = df[df["Property Name"] == property_name].sort_values("Year")
 
-# -----------------------------------------------------
-# 3. TIME SERIES MODEL – TREND FORECAST (LINEAR REGRESSION)
-# -----------------------------------------------------
-def forecast_linear(series, years_forward=5):
-    """Linear regression time-series projection."""
-    X = np.array(series.index).reshape(-1, 1)
-    y = np.array(series.values)
-    
-    model = LinearRegression().fit(X, y)
-    future_index = np.arange(len(series), len(series) + years_forward).reshape(-1, 1)
-    forecast = model.predict(future_index)
+    st.write(f"### Historical Data: {property_name}")
+    st.dataframe(pdf)
 
-    return forecast
+    # ----------------------------------------------------------
+    # 3. FORECAST FUNCTION
+    # ----------------------------------------------------------
+    def forecast_linear(series, years_forward=5):
+        X = np.arange(len(series)).reshape(-1, 1)
+        y = series.values
+        model = LinearRegression().fit(X, y)
+        future_index = np.arange(len(series), len(series) + years_forward).reshape(-1, 1)
+        return model.predict(future_index)
 
+    years_forward = 5
+    future_years = np.arange(pdf['Year'].max() + 1, pdf['Year'].max() + 1 + years_forward)
 
-# Build time series indexed from 0..n
-ts_noi = pd.Series(pdf['NOI'].values)
-ts_occ = pd.Series(pdf['Occupancy'].values)
-ts_value = pd.Series(pdf['Value'].values)
+    # Build series
+    ts_noi = pd.Series(pdf["NOI"].values)
+    ts_occ = pd.Series(pdf["Occupancy"].values)
+    ts_val = pd.Series(pdf["Value"].values)
 
-years_forward = 5
+    noi_fc = forecast_linear(ts_noi, years_forward)
+    occ_fc = forecast_linear(ts_occ, years_forward)
+    val_fc = forecast_linear(ts_val, years_forward)
 
-noi_forecast = forecast_linear(ts_noi, years_forward)
-occ_forecast = forecast_linear(ts_occ, years_forward)
-value_forecast = forecast_linear(ts_value, years_forward)
+    # ----------------------------------------------------------
+    # 4. SCENARIOS
+    # ----------------------------------------------------------
+    scenarios = pd.DataFrame({
+        "Year": future_years,
 
-future_years = np.arange(pdf['Year'].max()+1, pdf['Year'].max()+1+years_forward)
+        "NOI_Base": noi_fc,
+        "NOI_Up": noi_fc * 1.05,
+        "NOI_Down": noi_fc * 0.95,
 
+        "Occ_Base": occ_fc,
+        "Occ_Up": np.minimum(100, occ_fc * 1.02),
+        "Occ_Down": occ_fc * 0.97,
 
-# -----------------------------------------------------
-# 4. SCENARIO ANALYSIS
-# -----------------------------------------------------
-scenarios = pd.DataFrame({
-    "Year": future_years,
-    
-    # base-case = linear model
-    "NOI_Base": noi_forecast,
-    "Occ_Base": occ_forecast,
-    "Value_Base": value_forecast,
-    
-    # downside assumptions
-    "NOI_Down": noi_forecast * 0.95,     # -5% NOI shock
-    "Occ_Down": occ_forecast * 0.97,     # -3% occupancy
-    "Value_Down": value_forecast * 0.90, # -10% valuation
-    
-    # upside assumptions
-    "NOI_Up": noi_forecast * 1.05,        # +5% NOI lift
-    "Occ_Up": np.minimum(100, occ_forecast * 1.02), # +2% occupancy capped at 100
-    "Value_Up": value_forecast * 1.08     # +8% valuation
-})
+        "Value_Base": val_fc,
+        "Value_Up": val_fc * 1.08,
+        "Value_Down": val_fc * 0.90,
+    })
 
-print("\n----- 5-Year Scenario Forecast -----\n")
-print(scenarios)
+    st.write("### 5-Year Scenario Forecast")
+    st.dataframe(scenarios)
 
+    # ----------------------------------------------------------
+    # 5. PLOTLY CHARTS
+    # ----------------------------------------------------------
 
-# -----------------------------------------------------
-# 5. PLOTS (NOI, Occupancy, Value)
-# -----------------------------------------------------
-plt.figure(figsize=(10,5))
-plt.plot(pdf['Year'], pdf['NOI'], label='Historical')
-plt.plot(scenarios['Year'], scenarios['NOI_Base'], label='Base Case')
-plt.plot(scenarios['Year'], scenarios['NOI_Down'], label='Downside')
-plt.plot(scenarios['Year'], scenarios['NOI_Up'], label='Upside')
-plt.title(f"NOI Projection – {property_name}")
-plt.xlabel("Year")
-plt.ylabel("NOI")
-plt.legend()
-plt.grid(True)
-plt.show()
+    # ---- NOI Chart ----
+    fig_noi = go.Figure()
+    fig_noi.add_trace(go.Scatter(x=pdf["Year"], y=pdf["NOI"], mode="lines+markers", name="Historical"))
+    fig_noi.add_trace(go.Scatter(x=future_years, y=scenarios["NOI_Base"], name="Base Case"))
+    fig_noi.add_trace(go.Scatter(x=future_years, y=scenarios["NOI_Up"], name="Upside"))
+    fig_noi.add_trace(go.Scatter(x=future_years, y=scenarios["NOI_Down"], name="Downside"))
+    fig_noi.update_layout(title="NOI Projection", xaxis_title="Year", yaxis_title="NOI")
+    st.plotly_chart(fig_noi)
 
+    # ---- Occupancy Chart ----
+    fig_occ = go.Figure()
+    fig_occ.add_trace(go.Scatter(x=pdf["Year"], y=pdf["Occupancy"], mode="lines+markers", name="Historical"))
+    fig_occ.add_trace(go.Scatter(x=future_years, y=scenarios["Occ_Base"], name="Base Case"))
+    fig_occ.add_trace(go.Scatter(x=future_years, y=scenarios["Occ_Up"], name="Upside"))
+    fig_occ.add_trace(go.Scatter(x=future_years, y=scenarios["Occ_Down"], name="Downside"))
+    fig_occ.update_layout(title="Occupancy Projection", xaxis_title="Year", yaxis_title="Occupancy %")
+    st.plotly_chart(fig_occ)
 
-plt.figure(figsize=(10,5))
-plt.plot(pdf['Year'], pdf['Occupancy'], label='Historical')
-plt.plot(scenarios['Year'], scenarios['Occ_Base'], label='Base Case')
-plt.plot(scenarios['Year'], scenarios['Occ_Down'], label='Downside')
-plt.plot(scenarios['Year'], scenarios['Occ_Up'], label='Upside')
-plt.title(f"Occupancy Projection – {property_name}")
-plt.xlabel("Year")
-plt.ylabel("Occupancy %")
-plt.legend()
-plt.grid(True)
-plt.show()
-
-
-plt.figure(figsize=(10,5))
-plt.plot(pdf['Year'], pdf['Value'], label='Historical')
-plt.plot(scenarios['Year'], scenarios['Value_Base'], label='Base Case')
-plt.plot(scenarios['Year'], scenarios['Value_Down'], label='Downside')
-plt.plot(scenarios['Year'], scenarios['Value_Up'], label='Upside')
-plt.title(f"Property Value Projection – {property_name}")
-plt.xlabel("Year")
-plt.ylabel("Value")
-plt.legend()
-plt.grid(True)
-plt.show()
+    # ---- Value Chart ----
+    fig_val = go.Figure()
+    fig_val.add_trace(go.Scatter(x=pdf["Year"], y=pdf["Value"], mode="lines+markers", name="Historical"))
+    fig_val.add_trace(go.Scatter(x=future_years, y=scenarios["Value_Base"], name="Base Case"))
+    fig_val.add_trace(go.Scatter(x=future_years, y=scenarios["Value_Up"], name="Upside"))
+    fig_val.add_trace(go.Scatter(x=future_years, y=scenarios["Value_Down"], name="Downside"))
+    fig_val.update_layout(title="Property Value Projection", xaxis_title="Year", yaxis_title="Value")
+    st.plotly_chart(fig_val)
