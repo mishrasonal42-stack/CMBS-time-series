@@ -1,7 +1,9 @@
+pip install plotly.graph as plt
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+
 
 st.title("CMBS Property Time Series + 5-Year Scenario Forecast")
 
