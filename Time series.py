@@ -1,8 +1,7 @@
-import plotly.graph_objects as go
+import streamlit as st
 import pandas as pd
 import numpy as np
-
-
+import plotly.graph_objects as go
 
 st.title("CMBS Property Time Series + 5-Year Scenario Forecast")
 
@@ -11,26 +10,37 @@ st.title("CMBS Property Time Series + 5-Year Scenario Forecast")
 # ----------------------------------------------------------
 file = st.file_uploader("Upload CMBS_property_data.xlsx", type=["xlsx"])
 
-if file:
+if file is not None:
+
+    # Read Excel
     df = pd.read_excel(file)
 
-    st.write("### Preview of Uploaded Data")
+    # Validate required columns
+    required_cols = ["Property Name", "Year", "NOI", "Occupancy", "Value"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+
+    if missing_cols:
+        st.error(f"Missing required columns: {missing_cols}")
+        st.stop()
+
+    st.subheader("Preview of Uploaded Data")
     st.dataframe(df.head())
 
-    # Select property
-    property_name = st.selectbox("Select Property", df["Property Name"].unique())
+    # Property selection
+    properties = df["Property Name"].unique()
+    property_name = st.selectbox("Select Property", properties)
+
     pdf = df[df["Property Name"] == property_name].sort_values("Year")
 
-    st.write(f"### Historical Data for: {property_name}")
+    st.subheader(f"Historical Data for: {property_name}")
     st.dataframe(pdf)
 
     # ----------------------------------------------------------
-    # 2. PURE NUMPY LINEAR REGRESSION
+    # 2. PURE NUMPY LINEAR REGRESSION (NO sklearn needed)
     # ----------------------------------------------------------
     def simple_linear_regression(y):
         """
-        Returns slope & intercept for y = a*x + b using least squares.
-        x is assumed as [0, 1, 2, ...].
+        Computes slope & intercept for y = a*x + b using least squares.
         """
         x = np.arange(len(y))
         A = np.vstack([x, np.ones(len(x))]).T
@@ -48,9 +58,9 @@ if file:
     ts_val = pdf["Value"]
 
     years_forward = 5
-    future_years = np.arange(pdf["Year"].max()+1, pdf["Year"].max()+1+years_forward)
+    future_years = np.arange(pdf["Year"].max() + 1, pdf["Year"].max() + 1 + years_forward)
 
-    # Forecasts using trend
+    # Forecasts using NumPy linear regression
     noi_fc = forecast_trend(ts_noi, years_forward)
     occ_fc = forecast_trend(ts_occ, years_forward)
     val_fc = forecast_trend(ts_val, years_forward)
@@ -71,17 +81,17 @@ if file:
 
         "Value_Base": val_fc,
         "Value_Up": val_fc * 1.08,
-        "Value_Down": val_fc * 0.90
+        "Value_Down": val_fc * 0.90,
     })
 
-    st.write("### 5-Year Scenario Forecast")
+    st.subheader("5-Year Scenario Forecast")
     st.dataframe(scenarios)
 
     # ----------------------------------------------------------
-    # 4. PLOTS USING PLOTLY (fully Streamlit-compatible)
+    # 4. PLOTLY CHARTS (Streamlit compatible)
     # ----------------------------------------------------------
 
-    # NOI
+    # NOI Projection
     fig_noi = go.Figure()
     fig_noi.add_trace(go.Scatter(x=pdf["Year"], y=pdf["NOI"], mode="lines+markers", name="Historical"))
     fig_noi.add_trace(go.Scatter(x=future_years, y=scenarios["NOI_Base"], name="Base Case"))
@@ -90,7 +100,7 @@ if file:
     fig_noi.update_layout(title="NOI Projection", xaxis_title="Year", yaxis_title="NOI")
     st.plotly_chart(fig_noi)
 
-    # Occupancy
+    # Occupancy Projection
     fig_occ = go.Figure()
     fig_occ.add_trace(go.Scatter(x=pdf["Year"], y=pdf["Occupancy"], mode="lines+markers", name="Historical"))
     fig_occ.add_trace(go.Scatter(x=future_years, y=scenarios["Occ_Base"], name="Base Case"))
@@ -99,7 +109,7 @@ if file:
     fig_occ.update_layout(title="Occupancy Projection", xaxis_title="Year", yaxis_title="Occupancy %")
     st.plotly_chart(fig_occ)
 
-    # Value
+    # Value Projection
     fig_val = go.Figure()
     fig_val.add_trace(go.Scatter(x=pdf["Year"], y=pdf["Value"], mode="lines+markers", name="Historical"))
     fig_val.add_trace(go.Scatter(x=future_years, y=scenarios["Value_Base"], name="Base Case"))
